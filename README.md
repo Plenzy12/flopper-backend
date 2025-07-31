@@ -1,126 +1,147 @@
-# mime-types
+# finalhandler
 
-[![NPM Version][npm-version-image]][npm-url]
-[![NPM Downloads][npm-downloads-image]][npm-url]
-[![Node.js Version][node-version-image]][node-version-url]
-[![Build Status][ci-image]][ci-url]
+[![NPM Version][npm-image]][npm-url]
+[![NPM Downloads][downloads-image]][downloads-url]
+[![Node.js Version][node-image]][node-url]
+[![Build Status][github-actions-ci-image]][github-actions-ci-url]
 [![Test Coverage][coveralls-image]][coveralls-url]
 
-The ultimate javascript content-type utility.
+Node.js function to invoke as the final step to respond to HTTP request.
 
-Similar to [the `mime@1.x` module](https://www.npmjs.com/package/mime), except:
-
-- __No fallbacks.__ Instead of naively returning the first available type,
-  `mime-types` simply returns `false`, so do
-  `var type = mime.lookup('unrecognized') || 'application/octet-stream'`.
-- No `new Mime()` business, so you could do `var lookup = require('mime-types').lookup`.
-- No `.define()` functionality
-- Bug fixes for `.lookup(path)`
-
-Otherwise, the API is compatible with `mime` 1.x.
-
-## Install
+## Installation
 
 This is a [Node.js](https://nodejs.org/en/) module available through the
 [npm registry](https://www.npmjs.com/). Installation is done using the
 [`npm install` command](https://docs.npmjs.com/getting-started/installing-npm-packages-locally):
 
 ```sh
-$ npm install mime-types
+$ npm install finalhandler
 ```
-
-## Note on MIME Type Data and Semver
-
-This package considers the programmatic api as the semver compatibility. Additionally, the package which provides the MIME data
-for this package (`mime-db`) *also* considers it's programmatic api as the semver contract. This means the MIME type resolution is *not* considered
-in the semver bumps.
-
-In the past the version of `mime-db` was pinned to give two decision points when adopting MIME data changes. This is no longer true. We still update the
-`mime-db` package here as a `minor` release when necessary, but will use a `^` range going forward. This means that if you want to pin your `mime-db` data
-you will need to do it in your application. While this expectation was not set in docs until now, it is how the pacakge operated, so we do not feel this is
-a breaking change.
-
-If you wish to pin your `mime-db` version you can do that with overrides via your package manager of choice. See their documentation for how to correctly configure that.
-
-## Adding Types
-
-All mime types are based on [mime-db](https://www.npmjs.com/package/mime-db),
-so open a PR there if you'd like to add mime types.
 
 ## API
 
 ```js
-var mime = require('mime-types')
+var finalhandler = require('finalhandler')
 ```
 
-All functions return `false` if input is invalid or not found.
+### finalhandler(req, res, [options])
 
-### mime.lookup(path)
+Returns function to be invoked as the final step for the given `req` and `res`.
+This function is to be invoked as `fn(err)`. If `err` is falsy, the handler will
+write out a 404 response to the `res`. If it is truthy, an error response will
+be written out to the `res` or `res` will be terminated if a response has already
+started.
 
-Lookup the content-type associated with a file.
+When an error is written, the following information is added to the response:
+
+  * The `res.statusCode` is set from `err.status` (or `err.statusCode`). If
+    this value is outside the 4xx or 5xx range, it will be set to 500.
+  * The `res.statusMessage` is set according to the status code.
+  * The body will be the HTML of the status code message if `env` is
+    `'production'`, otherwise will be `err.stack`.
+  * Any headers specified in an `err.headers` object.
+
+The final handler will also unpipe anything from `req` when it is invoked.
+
+#### options.env
+
+By default, the environment is determined by `NODE_ENV` variable, but it can be
+overridden by this option.
+
+#### options.onerror
+
+Provide a function to be called with the `err` when it exists. Can be used for
+writing errors to a central location without excessive function generation. Called
+as `onerror(err, req, res)`.
+
+## Examples
+
+### always 404
 
 ```js
-mime.lookup('json') // 'application/json'
-mime.lookup('.md') // 'text/markdown'
-mime.lookup('file.html') // 'text/html'
-mime.lookup('folder/file.js') // 'application/javascript'
-mime.lookup('folder/.htaccess') // false
+var finalhandler = require('finalhandler')
+var http = require('http')
 
-mime.lookup('cats') // false
+var server = http.createServer(function (req, res) {
+  var done = finalhandler(req, res)
+  done()
+})
+
+server.listen(3000)
 ```
 
-### mime.contentType(type)
-
-Create a full content-type header given a content-type or extension.
-When given an extension, `mime.lookup` is used to get the matching
-content-type, otherwise the given content-type is used. Then if the
-content-type does not already have a `charset` parameter, `mime.charset`
-is used to get the default charset and add to the returned content-type.
+### perform simple action
 
 ```js
-mime.contentType('markdown') // 'text/x-markdown; charset=utf-8'
-mime.contentType('file.json') // 'application/json; charset=utf-8'
-mime.contentType('text/html') // 'text/html; charset=utf-8'
-mime.contentType('text/html; charset=iso-8859-1') // 'text/html; charset=iso-8859-1'
+var finalhandler = require('finalhandler')
+var fs = require('fs')
+var http = require('http')
 
-// from a full path
-mime.contentType(path.extname('/path/to/file.json')) // 'application/json; charset=utf-8'
+var server = http.createServer(function (req, res) {
+  var done = finalhandler(req, res)
+
+  fs.readFile('index.html', function (err, buf) {
+    if (err) return done(err)
+    res.setHeader('Content-Type', 'text/html')
+    res.end(buf)
+  })
+})
+
+server.listen(3000)
 ```
 
-### mime.extension(type)
-
-Get the default extension for a content-type.
+### use with middleware-style functions
 
 ```js
-mime.extension('application/octet-stream') // 'bin'
+var finalhandler = require('finalhandler')
+var http = require('http')
+var serveStatic = require('serve-static')
+
+var serve = serveStatic('public')
+
+var server = http.createServer(function (req, res) {
+  var done = finalhandler(req, res)
+  serve(req, res, done)
+})
+
+server.listen(3000)
 ```
 
-### mime.charset(type)
-
-Lookup the implied default charset of a content-type.
+### keep log of all errors
 
 ```js
-mime.charset('text/markdown') // 'UTF-8'
+var finalhandler = require('finalhandler')
+var fs = require('fs')
+var http = require('http')
+
+var server = http.createServer(function (req, res) {
+  var done = finalhandler(req, res, { onerror: logerror })
+
+  fs.readFile('index.html', function (err, buf) {
+    if (err) return done(err)
+    res.setHeader('Content-Type', 'text/html')
+    res.end(buf)
+  })
+})
+
+server.listen(3000)
+
+function logerror (err) {
+  console.error(err.stack || err.toString())
+}
 ```
-
-### var type = mime.types[extension]
-
-A map of content-types by extension.
-
-### [extensions...] = mime.extensions[type]
-
-A map of extensions by content-type.
 
 ## License
 
 [MIT](LICENSE)
 
-[ci-image]: https://badgen.net/github/checks/jshttp/mime-types/master?label=ci
-[ci-url]: https://github.com/jshttp/mime-types/actions/workflows/ci.yml
-[coveralls-image]: https://badgen.net/coveralls/c/github/jshttp/mime-types/master
-[coveralls-url]: https://coveralls.io/r/jshttp/mime-types?branch=master
-[node-version-image]: https://badgen.net/npm/node/mime-types
-[node-version-url]: https://nodejs.org/en/download
-[npm-downloads-image]: https://badgen.net/npm/dm/mime-types
-[npm-url]: https://npmjs.org/package/mime-types
-[npm-version-image]: https://badgen.net/npm/v/mime-types
+[npm-image]: https://img.shields.io/npm/v/finalhandler.svg
+[npm-url]: https://npmjs.org/package/finalhandler
+[node-image]: https://img.shields.io/node/v/finalhandler.svg
+[node-url]: https://nodejs.org/en/download
+[coveralls-image]: https://img.shields.io/coveralls/pillarjs/finalhandler.svg
+[coveralls-url]: https://coveralls.io/r/pillarjs/finalhandler?branch=master
+[downloads-image]: https://img.shields.io/npm/dm/finalhandler.svg
+[downloads-url]: https://npmjs.org/package/finalhandler
+[github-actions-ci-image]: https://github.com/pillarjs/finalhandler/actions/workflows/ci.yml/badge.svg
+[github-actions-ci-url]: https://github.com/pillarjs/finalhandler/actions/workflows/ci.yml
