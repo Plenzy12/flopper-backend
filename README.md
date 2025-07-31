@@ -1,769 +1,518 @@
-# minipass
+# yargs-parser
 
-A _very_ minimal implementation of a [PassThrough
-stream](https://nodejs.org/api/stream.html#stream_class_stream_passthrough)
+![ci](https://github.com/yargs/yargs-parser/workflows/ci/badge.svg)
+[![NPM version](https://img.shields.io/npm/v/yargs-parser.svg)](https://www.npmjs.com/package/yargs-parser)
+[![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow.svg)](https://conventionalcommits.org)
+![nycrc config on GitHub](https://img.shields.io/nycrc/yargs/yargs-parser)
 
-[It's very
-fast](https://docs.google.com/spreadsheets/d/1K_HR5oh3r80b8WVMWCPPjfuWXUgfkmhlX7FGI6JJ8tY/edit?usp=sharing)
-for objects, strings, and buffers.
+The mighty option parser used by [yargs](https://github.com/yargs/yargs).
 
-Supports `pipe()`ing (including multi-`pipe()` and backpressure
-transmission), buffering data until either a `data` event handler
-or `pipe()` is added (so you don't lose the first chunk), and
-most other cases where PassThrough is a good idea.
+visit the [yargs website](http://yargs.js.org/) for more examples, and thorough usage instructions.
 
-There is a `read()` method, but it's much more efficient to
-consume data from this stream via `'data'` events or by calling
-`pipe()` into some other stream. Calling `read()` requires the
-buffer to be flattened in some cases, which requires copying
-memory.
+<img width="250" src="https://raw.githubusercontent.com/yargs/yargs-parser/main/yargs-logo.png">
 
-If you set `objectMode: true` in the options, then whatever is
-written will be emitted. Otherwise, it'll do a minimal amount of
-Buffer copying to ensure proper Streams semantics when `read(n)`
-is called.
+## Example
 
-`objectMode` can also be set by doing `stream.objectMode = true`,
-or by writing any non-string/non-buffer data. `objectMode` cannot
-be set to false once it is set.
-
-This is not a `through` or `through2` stream. It doesn't
-transform the data, it just passes it right through. If you want
-to transform the data, extend the class, and override the
-`write()` method. Once you're done transforming the data however
-you want, call `super.write()` with the transform output.
-
-For some examples of streams that extend Minipass in various
-ways, check out:
-
-- [minizlib](http://npm.im/minizlib)
-- [fs-minipass](http://npm.im/fs-minipass)
-- [tar](http://npm.im/tar)
-- [minipass-collect](http://npm.im/minipass-collect)
-- [minipass-flush](http://npm.im/minipass-flush)
-- [minipass-pipeline](http://npm.im/minipass-pipeline)
-- [tap](http://npm.im/tap)
-- [tap-parser](http://npm.im/tap-parser)
-- [treport](http://npm.im/treport)
-- [minipass-fetch](http://npm.im/minipass-fetch)
-- [pacote](http://npm.im/pacote)
-- [make-fetch-happen](http://npm.im/make-fetch-happen)
-- [cacache](http://npm.im/cacache)
-- [ssri](http://npm.im/ssri)
-- [npm-registry-fetch](http://npm.im/npm-registry-fetch)
-- [minipass-json-stream](http://npm.im/minipass-json-stream)
-- [minipass-sized](http://npm.im/minipass-sized)
-
-## Differences from Node.js Streams
-
-There are several things that make Minipass streams different
-from (and in some ways superior to) Node.js core streams.
-
-Please read these caveats if you are familiar with node-core
-streams and intend to use Minipass streams in your programs.
-
-You can avoid most of these differences entirely (for a very
-small performance penalty) by setting `{async: true}` in the
-constructor options.
-
-### Timing
-
-Minipass streams are designed to support synchronous use-cases.
-Thus, data is emitted as soon as it is available, always. It is
-buffered until read, but no longer. Another way to look at it is
-that Minipass streams are exactly as synchronous as the logic
-that writes into them.
-
-This can be surprising if your code relies on
-`PassThrough.write()` always providing data on the next tick
-rather than the current one, or being able to call `resume()` and
-not have the entire buffer disappear immediately.
-
-However, without this synchronicity guarantee, there would be no
-way for Minipass to achieve the speeds it does, or support the
-synchronous use cases that it does. Simply put, waiting takes
-time.
-
-This non-deferring approach makes Minipass streams much easier to
-reason about, especially in the context of Promises and other
-flow-control mechanisms.
-
-Example:
-
-```js
-// hybrid module, either works
-import { Minipass } from 'minipass'
-// or:
-const { Minipass } = require('minipass')
-
-const stream = new Minipass()
-stream.on('data', () => console.log('data event'))
-console.log('before write')
-stream.write('hello')
-console.log('after write')
-// output:
-// before write
-// data event
-// after write
+```sh
+npm i yargs-parser --save
 ```
 
-### Exception: Async Opt-In
-
-If you wish to have a Minipass stream with behavior that more
-closely mimics Node.js core streams, you can set the stream in
-async mode either by setting `async: true` in the constructor
-options, or by setting `stream.async = true` later on.
-
 ```js
-// hybrid module, either works
-import { Minipass } from 'minipass'
-// or:
-const { Minipass } = require('minipass')
-
-const asyncStream = new Minipass({ async: true })
-asyncStream.on('data', () => console.log('data event'))
-console.log('before write')
-asyncStream.write('hello')
-console.log('after write')
-// output:
-// before write
-// after write
-// data event <-- this is deferred until the next tick
+const argv = require('yargs-parser')(process.argv.slice(2))
+console.log(argv)
 ```
 
-Switching _out_ of async mode is unsafe, as it could cause data
-corruption, and so is not enabled. Example:
-
-```js
-import { Minipass } from 'minipass'
-const stream = new Minipass({ encoding: 'utf8' })
-stream.on('data', chunk => console.log(chunk))
-stream.async = true
-console.log('before writes')
-stream.write('hello')
-setStreamSyncAgainSomehow(stream) // <-- this doesn't actually exist!
-stream.write('world')
-console.log('after writes')
-// hypothetical output would be:
-// before writes
-// world
-// after writes
-// hello
-// NOT GOOD!
+```console
+$ node example.js --foo=33 --bar hello
+{ _: [], foo: 33, bar: 'hello' }
 ```
 
-To avoid this problem, once set into async mode, any attempt to
-make the stream sync again will be ignored.
+_or parse a string!_
 
 ```js
-const { Minipass } = require('minipass')
-const stream = new Minipass({ encoding: 'utf8' })
-stream.on('data', chunk => console.log(chunk))
-stream.async = true
-console.log('before writes')
-stream.write('hello')
-stream.async = false // <-- no-op, stream already async
-stream.write('world')
-console.log('after writes')
-// actual output:
-// before writes
-// after writes
-// hello
-// world
+const argv = require('yargs-parser')('--foo=99 --bar=33')
+console.log(argv)
 ```
 
-### No High/Low Water Marks
-
-Node.js core streams will optimistically fill up a buffer,
-returning `true` on all writes until the limit is hit, even if
-the data has nowhere to go. Then, they will not attempt to draw
-more data in until the buffer size dips below a minimum value.
-
-Minipass streams are much simpler. The `write()` method will
-return `true` if the data has somewhere to go (which is to say,
-given the timing guarantees, that the data is already there by
-the time `write()` returns).
-
-If the data has nowhere to go, then `write()` returns false, and
-the data sits in a buffer, to be drained out immediately as soon
-as anyone consumes it.
-
-Since nothing is ever buffered unnecessarily, there is much less
-copying data, and less bookkeeping about buffer capacity levels.
-
-### Hazards of Buffering (or: Why Minipass Is So Fast)
-
-Since data written to a Minipass stream is immediately written
-all the way through the pipeline, and `write()` always returns
-true/false based on whether the data was fully flushed,
-backpressure is communicated immediately to the upstream caller.
-This minimizes buffering.
-
-Consider this case:
-
-```js
-const { PassThrough } = require('stream')
-const p1 = new PassThrough({ highWaterMark: 1024 })
-const p2 = new PassThrough({ highWaterMark: 1024 })
-const p3 = new PassThrough({ highWaterMark: 1024 })
-const p4 = new PassThrough({ highWaterMark: 1024 })
-
-p1.pipe(p2).pipe(p3).pipe(p4)
-p4.on('data', () => console.log('made it through'))
-
-// this returns false and buffers, then writes to p2 on next tick (1)
-// p2 returns false and buffers, pausing p1, then writes to p3 on next tick (2)
-// p3 returns false and buffers, pausing p2, then writes to p4 on next tick (3)
-// p4 returns false and buffers, pausing p3, then emits 'data' and 'drain'
-// on next tick (4)
-// p3 sees p4's 'drain' event, and calls resume(), emitting 'resume' and
-// 'drain' on next tick (5)
-// p2 sees p3's 'drain', calls resume(), emits 'resume' and 'drain' on next tick (6)
-// p1 sees p2's 'drain', calls resume(), emits 'resume' and 'drain' on next
-// tick (7)
-
-p1.write(Buffer.alloc(2048)) // returns false
+```console
+{ _: [], foo: 99, bar: 33 }
 ```
 
-Along the way, the data was buffered and deferred at each stage,
-and multiple event deferrals happened, for an unblocked pipeline
-where it was perfectly safe to write all the way through!
-
-Furthermore, setting a `highWaterMark` of `1024` might lead
-someone reading the code to think an advisory maximum of 1KiB is
-being set for the pipeline. However, the actual advisory
-buffering level is the _sum_ of `highWaterMark` values, since
-each one has its own bucket.
-
-Consider the Minipass case:
+Convert an array of mixed types before passing to `yargs-parser`:
 
 ```js
-const m1 = new Minipass()
-const m2 = new Minipass()
-const m3 = new Minipass()
-const m4 = new Minipass()
-
-m1.pipe(m2).pipe(m3).pipe(m4)
-m4.on('data', () => console.log('made it through'))
-
-// m1 is flowing, so it writes the data to m2 immediately
-// m2 is flowing, so it writes the data to m3 immediately
-// m3 is flowing, so it writes the data to m4 immediately
-// m4 is flowing, so it fires the 'data' event immediately, returns true
-// m4's write returned true, so m3 is still flowing, returns true
-// m3's write returned true, so m2 is still flowing, returns true
-// m2's write returned true, so m1 is still flowing, returns true
-// No event deferrals or buffering along the way!
-
-m1.write(Buffer.alloc(2048)) // returns true
+const parse = require('yargs-parser')
+parse(['-f', 11, '--zoom', 55].join(' '))   // <-- array to string
+parse(['-f', 11, '--zoom', 55].map(String)) // <-- array of strings
 ```
 
-It is extremely unlikely that you _don't_ want to buffer any data
-written, or _ever_ buffer data that can be flushed all the way
-through. Neither node-core streams nor Minipass ever fail to
-buffer written data, but node-core streams do a lot of
-unnecessary buffering and pausing.
+## Deno Example
 
-As always, the faster implementation is the one that does less
-stuff and waits less time to do it.
+As of `v19` `yargs-parser` supports [Deno](https://github.com/denoland/deno):
 
-### Immediately emit `end` for empty streams (when not paused)
+```typescript
+import parser from "https://deno.land/x/yargs_parser/deno.ts";
 
-If a stream is not paused, and `end()` is called before writing
-any data into it, then it will emit `end` immediately.
-
-If you have logic that occurs on the `end` event which you don't
-want to potentially happen immediately (for example, closing file
-descriptors, moving on to the next entry in an archive parse
-stream, etc.) then be sure to call `stream.pause()` on creation,
-and then `stream.resume()` once you are ready to respond to the
-`end` event.
-
-However, this is _usually_ not a problem because:
-
-### Emit `end` When Asked
-
-One hazard of immediately emitting `'end'` is that you may not
-yet have had a chance to add a listener. In order to avoid this
-hazard, Minipass streams safely re-emit the `'end'` event if a
-new listener is added after `'end'` has been emitted.
-
-Ie, if you do `stream.on('end', someFunction)`, and the stream
-has already emitted `end`, then it will call the handler right
-away. (You can think of this somewhat like attaching a new
-`.then(fn)` to a previously-resolved Promise.)
-
-To prevent calling handlers multiple times who would not expect
-multiple ends to occur, all listeners are removed from the
-`'end'` event whenever it is emitted.
-
-### Emit `error` When Asked
-
-The most recent error object passed to the `'error'` event is
-stored on the stream. If a new `'error'` event handler is added,
-and an error was previously emitted, then the event handler will
-be called immediately (or on `process.nextTick` in the case of
-async streams).
-
-This makes it much more difficult to end up trying to interact
-with a broken stream, if the error handler is added after an
-error was previously emitted.
-
-### Impact of "immediate flow" on Tee-streams
-
-A "tee stream" is a stream piping to multiple destinations:
-
-```js
-const tee = new Minipass()
-t.pipe(dest1)
-t.pipe(dest2)
-t.write('foo') // goes to both destinations
+const argv = parser('--foo=99 --bar=9987930', {
+  string: ['bar']
+})
+console.log(argv)
 ```
 
-Since Minipass streams _immediately_ process any pending data
-through the pipeline when a new pipe destination is added, this
-can have surprising effects, especially when a stream comes in
-from some other function and may or may not have data in its
-buffer.
+## ESM Example
+
+As of `v19` `yargs-parser` supports ESM (_both in Node.js and in the browser_):
+
+**Node.js:**
 
 ```js
-// WARNING! WILL LOSE DATA!
-const src = new Minipass()
-src.write('foo')
-src.pipe(dest1) // 'foo' chunk flows to dest1 immediately, and is gone
-src.pipe(dest2) // gets nothing!
+import parser from 'yargs-parser'
+
+const argv = parser('--foo=99 --bar=9987930', {
+  string: ['bar']
+})
+console.log(argv)
 ```
 
-One solution is to create a dedicated tee-stream junction that
-pipes to both locations, and then pipe to _that_ instead.
+**Browsers:**
 
-```js
-// Safe example: tee to both places
-const src = new Minipass()
-src.write('foo')
-const tee = new Minipass()
-tee.pipe(dest1)
-tee.pipe(dest2)
-src.pipe(tee) // tee gets 'foo', pipes to both locations
+```html
+<!doctype html>
+<body>
+  <script type="module">
+    import parser from "https://unpkg.com/yargs-parser@19.0.0/browser.js";
+
+    const argv = parser('--foo=99 --bar=9987930', {
+      string: ['bar']
+    })
+    console.log(argv)
+  </script>
+</body>
 ```
 
-The same caveat applies to `on('data')` event listeners. The
-first one added will _immediately_ receive all of the data,
-leaving nothing for the second:
+## API
+
+### parser(args, opts={})
+
+Parses command line arguments returning a simple mapping of keys and values.
+
+**expects:**
+
+* `args`: a string or array of strings representing the options to parse.
+* `opts`: provide a set of hints indicating how `args` should be parsed:
+  * `opts.alias`: an object representing the set of aliases for a key: `{alias: {foo: ['f']}}`.
+  * `opts.array`: indicate that keys should be parsed as an array: `{array: ['foo', 'bar']}`.<br>
+    Indicate that keys should be parsed as an array and coerced to booleans / numbers:<br>
+    `{array: [{ key: 'foo', boolean: true }, {key: 'bar', number: true}]}`.
+  * `opts.boolean`: arguments should be parsed as booleans: `{boolean: ['x', 'y']}`.
+  * `opts.coerce`: provide a custom synchronous function that returns a coerced value from the argument provided
+    (or throws an error). For arrays the function is called only once for the entire array:<br>
+    `{coerce: {foo: function (arg) {return modifiedArg}}}`.
+  * `opts.config`: indicate a key that represents a path to a configuration file (this file will be loaded and parsed).
+  * `opts.configObjects`: configuration objects to parse, their properties will be set as arguments:<br>
+    `{configObjects: [{'x': 5, 'y': 33}, {'z': 44}]}`.
+  * `opts.configuration`: provide configuration options to the yargs-parser (see: [configuration](#configuration)).
+  * `opts.count`: indicate a key that should be used as a counter, e.g., `-vvv` = `{v: 3}`.
+  * `opts.default`: provide default values for keys: `{default: {x: 33, y: 'hello world!'}}`.
+  * `opts.envPrefix`: environment variables (`process.env`) with the prefix provided should be parsed.
+  * `opts.narg`: specify that a key requires `n` arguments: `{narg: {x: 2}}`.
+  * `opts.normalize`: `path.normalize()` will be applied to values set to this key.
+  * `opts.number`: keys should be treated as numbers.
+  * `opts.string`: keys should be treated as strings (even if they resemble a number `-x 33`).
+
+**returns:**
+
+* `obj`: an object representing the parsed value of `args`
+  * `key/value`: key value pairs for each argument and their aliases.
+  * `_`: an array representing the positional arguments.
+  * [optional] `--`:  an array with arguments after the end-of-options flag `--`.
+
+### require('yargs-parser').detailed(args, opts={})
+
+Parses a command line string, returning detailed information required by the
+yargs engine.
+
+**expects:**
+
+* `args`: a string or array of strings representing options to parse.
+* `opts`: provide a set of hints indicating how `args`, inputs are identical to `require('yargs-parser')(args, opts={})`.
+
+**returns:**
+
+* `argv`: an object representing the parsed value of `args`
+  * `key/value`: key value pairs for each argument and their aliases.
+  * `_`: an array representing the positional arguments.
+  * [optional] `--`:  an array with arguments after the end-of-options flag `--`.
+* `error`: populated with an error object if an exception occurred during parsing.
+* `aliases`: the inferred list of aliases built by combining lists in `opts.alias`.
+* `newAliases`: any new aliases added via camel-case expansion:
+  * `boolean`: `{ fooBar: true }`
+* `defaulted`: any new argument created by `opts.default`, no aliases included.
+  * `boolean`: `{ foo: true }`
+* `configuration`: given by default settings and `opts.configuration`.
+
+<a name="configuration"></a>
+
+### Configuration
+
+The yargs-parser applies several automated transformations on the keys provided
+in `args`. These features can be turned on and off using the `configuration` field
+of `opts`.
 
 ```js
-// WARNING! WILL LOSE DATA!
-const src = new Minipass()
-src.write('foo')
-src.on('data', handler1) // receives 'foo' right away
-src.on('data', handler2) // nothing to see here!
-```
-
-Using a dedicated tee-stream can be used in this case as well:
-
-```js
-// Safe example: tee to both data handlers
-const src = new Minipass()
-src.write('foo')
-const tee = new Minipass()
-tee.on('data', handler1)
-tee.on('data', handler2)
-src.pipe(tee)
-```
-
-All of the hazards in this section are avoided by setting `{
-async: true }` in the Minipass constructor, or by setting
-`stream.async = true` afterwards. Note that this does add some
-overhead, so should only be done in cases where you are willing
-to lose a bit of performance in order to avoid having to refactor
-program logic.
-
-## USAGE
-
-It's a stream! Use it like a stream and it'll most likely do what
-you want.
-
-```js
-import { Minipass } from 'minipass'
-const mp = new Minipass(options) // optional: { encoding, objectMode }
-mp.write('foo')
-mp.pipe(someOtherStream)
-mp.end('bar')
-```
-
-### OPTIONS
-
-- `encoding` How would you like the data coming _out_ of the
-  stream to be encoded? Accepts any values that can be passed to
-  `Buffer.toString()`.
-- `objectMode` Emit data exactly as it comes in. This will be
-  flipped on by default if you write() something other than a
-  string or Buffer at any point. Setting `objectMode: true` will
-  prevent setting any encoding value.
-- `async` Defaults to `false`. Set to `true` to defer data
-  emission until next tick. This reduces performance slightly,
-  but makes Minipass streams use timing behavior closer to Node
-  core streams. See [Timing](#timing) for more details.
-- `signal` An `AbortSignal` that will cause the stream to unhook
-  itself from everything and become as inert as possible. Note
-  that providing a `signal` parameter will make `'error'` events
-  no longer throw if they are unhandled, but they will still be
-  emitted to handlers if any are attached.
-
-### API
-
-Implements the user-facing portions of Node.js's `Readable` and
-`Writable` streams.
-
-### Methods
-
-- `write(chunk, [encoding], [callback])` - Put data in. (Note
-  that, in the base Minipass class, the same data will come out.)
-  Returns `false` if the stream will buffer the next write, or
-  true if it's still in "flowing" mode.
-- `end([chunk, [encoding]], [callback])` - Signal that you have
-  no more data to write. This will queue an `end` event to be
-  fired when all the data has been consumed.
-- `setEncoding(encoding)` - Set the encoding for data coming of
-  the stream. This can only be done once.
-- `pause()` - No more data for a while, please. This also
-  prevents `end` from being emitted for empty streams until the
-  stream is resumed.
-- `resume()` - Resume the stream. If there's data in the buffer,
-  it is all discarded. Any buffered events are immediately
-  emitted.
-- `pipe(dest)` - Send all output to the stream provided. When
-  data is emitted, it is immediately written to any and all pipe
-  destinations. (Or written on next tick in `async` mode.)
-- `unpipe(dest)` - Stop piping to the destination stream. This is
-  immediate, meaning that any asynchronously queued data will
-  _not_ make it to the destination when running in `async` mode.
-  - `options.end` - Boolean, end the destination stream when the
-    source stream ends. Default `true`.
-  - `options.proxyErrors` - Boolean, proxy `error` events from
-    the source stream to the destination stream. Note that errors
-    are _not_ proxied after the pipeline terminates, either due
-    to the source emitting `'end'` or manually unpiping with
-    `src.unpipe(dest)`. Default `false`.
-- `on(ev, fn)`, `emit(ev, fn)` - Minipass streams are
-  EventEmitters. Some events are given special treatment,
-  however. (See below under "events".)
-- `promise()` - Returns a Promise that resolves when the stream
-  emits `end`, or rejects if the stream emits `error`.
-- `collect()` - Return a Promise that resolves on `end` with an
-  array containing each chunk of data that was emitted, or
-  rejects if the stream emits `error`. Note that this consumes
-  the stream data.
-- `concat()` - Same as `collect()`, but concatenates the data
-  into a single Buffer object. Will reject the returned promise
-  if the stream is in objectMode, or if it goes into objectMode
-  by the end of the data.
-- `read(n)` - Consume `n` bytes of data out of the buffer. If `n`
-  is not provided, then consume all of it. If `n` bytes are not
-  available, then it returns null. **Note** consuming streams in
-  this way is less efficient, and can lead to unnecessary Buffer
-  copying.
-- `destroy([er])` - Destroy the stream. If an error is provided,
-  then an `'error'` event is emitted. If the stream has a
-  `close()` method, and has not emitted a `'close'` event yet,
-  then `stream.close()` will be called. Any Promises returned by
-  `.promise()`, `.collect()` or `.concat()` will be rejected.
-  After being destroyed, writing to the stream will emit an
-  error. No more data will be emitted if the stream is destroyed,
-  even if it was previously buffered.
-
-### Properties
-
-- `bufferLength` Read-only. Total number of bytes buffered, or in
-  the case of objectMode, the total number of objects.
-- `encoding` The encoding that has been set. (Setting this is
-  equivalent to calling `setEncoding(enc)` and has the same
-  prohibition against setting multiple times.)
-- `flowing` Read-only. Boolean indicating whether a chunk written
-  to the stream will be immediately emitted.
-- `emittedEnd` Read-only. Boolean indicating whether the end-ish
-  events (ie, `end`, `prefinish`, `finish`) have been emitted.
-  Note that listening on any end-ish event will immediateyl
-  re-emit it if it has already been emitted.
-- `writable` Whether the stream is writable. Default `true`. Set
-  to `false` when `end()`
-- `readable` Whether the stream is readable. Default `true`.
-- `pipes` An array of Pipe objects referencing streams that this
-  stream is piping into.
-- `destroyed` A getter that indicates whether the stream was
-  destroyed.
-- `paused` True if the stream has been explicitly paused,
-  otherwise false.
-- `objectMode` Indicates whether the stream is in `objectMode`.
-  Once set to `true`, it cannot be set to `false`.
-- `aborted` Readonly property set when the `AbortSignal`
-  dispatches an `abort` event.
-
-### Events
-
-- `data` Emitted when there's data to read. Argument is the data
-  to read. This is never emitted while not flowing. If a listener
-  is attached, that will resume the stream.
-- `end` Emitted when there's no more data to read. This will be
-  emitted immediately for empty streams when `end()` is called.
-  If a listener is attached, and `end` was already emitted, then
-  it will be emitted again. All listeners are removed when `end`
-  is emitted.
-- `prefinish` An end-ish event that follows the same logic as
-  `end` and is emitted in the same conditions where `end` is
-  emitted. Emitted after `'end'`.
-- `finish` An end-ish event that follows the same logic as `end`
-  and is emitted in the same conditions where `end` is emitted.
-  Emitted after `'prefinish'`.
-- `close` An indication that an underlying resource has been
-  released. Minipass does not emit this event, but will defer it
-  until after `end` has been emitted, since it throws off some
-  stream libraries otherwise.
-- `drain` Emitted when the internal buffer empties, and it is
-  again suitable to `write()` into the stream.
-- `readable` Emitted when data is buffered and ready to be read
-  by a consumer.
-- `resume` Emitted when stream changes state from buffering to
-  flowing mode. (Ie, when `resume` is called, `pipe` is called,
-  or a `data` event listener is added.)
-
-### Static Methods
-
-- `Minipass.isStream(stream)` Returns `true` if the argument is a
-  stream, and false otherwise. To be considered a stream, the
-  object must be either an instance of Minipass, or an
-  EventEmitter that has either a `pipe()` method, or both
-  `write()` and `end()` methods. (Pretty much any stream in
-  node-land will return `true` for this.)
-
-## EXAMPLES
-
-Here are some examples of things you can do with Minipass
-streams.
-
-### simple "are you done yet" promise
-
-```js
-mp.promise().then(
-  () => {
-    // stream is finished
-  },
-  er => {
-    // stream emitted an error
+var parsed = parser(['--no-dice'], {
+  configuration: {
+    'boolean-negation': false
   }
-)
-```
-
-### collecting
-
-```js
-mp.collect().then(all => {
-  // all is an array of all the data emitted
-  // encoding is supported in this case, so
-  // so the result will be a collection of strings if
-  // an encoding is specified, or buffers/objects if not.
-  //
-  // In an async function, you may do
-  // const data = await stream.collect()
 })
 ```
 
-### collecting into a single blob
+### short option groups
 
-This is a bit slower because it concatenates the data into one
-chunk for you, but if you're going to do it yourself anyway, it's
-convenient this way:
+* default: `true`.
+* key: `short-option-groups`.
 
-```js
-mp.concat().then(onebigchunk => {
-  // onebigchunk is a string if the stream
-  // had an encoding set, or a buffer otherwise.
-})
+Should a group of short-options be treated as boolean flags?
+
+```console
+$ node example.js -abc
+{ _: [], a: true, b: true, c: true }
 ```
 
-### iteration
+_if disabled:_
 
-You can iterate over streams synchronously or asynchronously in
-platforms that support it.
-
-Synchronous iteration will end when the currently available data
-is consumed, even if the `end` event has not been reached. In
-string and buffer mode, the data is concatenated, so unless
-multiple writes are occurring in the same tick as the `read()`,
-sync iteration loops will generally only have a single iteration.
-
-To consume chunks in this way exactly as they have been written,
-with no flattening, create the stream with the `{ objectMode:
-true }` option.
-
-```js
-const mp = new Minipass({ objectMode: true })
-mp.write('a')
-mp.write('b')
-for (let letter of mp) {
-  console.log(letter) // a, b
-}
-mp.write('c')
-mp.write('d')
-for (let letter of mp) {
-  console.log(letter) // c, d
-}
-mp.write('e')
-mp.end()
-for (let letter of mp) {
-  console.log(letter) // e
-}
-for (let letter of mp) {
-  console.log(letter) // nothing
-}
+```console
+$ node example.js -abc
+{ _: [], abc: true }
 ```
 
-Asynchronous iteration will continue until the end event is reached,
-consuming all of the data.
+### camel-case expansion
 
-```js
-const mp = new Minipass({ encoding: 'utf8' })
+* default: `true`.
+* key: `camel-case-expansion`.
 
-// some source of some data
-let i = 5
-const inter = setInterval(() => {
-  if (i-- > 0) mp.write(Buffer.from('foo\n', 'utf8'))
-  else {
-    mp.end()
-    clearInterval(inter)
-  }
-}, 100)
+Should hyphenated arguments be expanded into camel-case aliases?
 
-// consume the data with asynchronous iteration
-async function consume() {
-  for await (let chunk of mp) {
-    console.log(chunk)
-  }
-  return 'ok'
-}
-
-consume().then(res => console.log(res))
-// logs `foo\n` 5 times, and then `ok`
+```console
+$ node example.js --foo-bar
+{ _: [], 'foo-bar': true, fooBar: true }
 ```
 
-### subclass that `console.log()`s everything written into it
+_if disabled:_
 
-```js
-class Logger extends Minipass {
-  write(chunk, encoding, callback) {
-    console.log('WRITE', chunk, encoding)
-    return super.write(chunk, encoding, callback)
-  }
-  end(chunk, encoding, callback) {
-    console.log('END', chunk, encoding)
-    return super.end(chunk, encoding, callback)
-  }
-}
-
-someSource.pipe(new Logger()).pipe(someDest)
+```console
+$ node example.js --foo-bar
+{ _: [], 'foo-bar': true }
 ```
 
-### same thing, but using an inline anonymous class
+### dot-notation
 
-```js
-// js classes are fun
-someSource
-  .pipe(
-    new (class extends Minipass {
-      emit(ev, ...data) {
-        // let's also log events, because debugging some weird thing
-        console.log('EMIT', ev)
-        return super.emit(ev, ...data)
-      }
-      write(chunk, encoding, callback) {
-        console.log('WRITE', chunk, encoding)
-        return super.write(chunk, encoding, callback)
-      }
-      end(chunk, encoding, callback) {
-        console.log('END', chunk, encoding)
-        return super.end(chunk, encoding, callback)
-      }
-    })()
-  )
-  .pipe(someDest)
+* default: `true`
+* key: `dot-notation`
+
+Should keys that contain `.` be treated as objects?
+
+```console
+$ node example.js --foo.bar
+{ _: [], foo: { bar: true } }
 ```
 
-### subclass that defers 'end' for some reason
+_if disabled:_
 
-```js
-class SlowEnd extends Minipass {
-  emit(ev, ...args) {
-    if (ev === 'end') {
-      console.log('going to end, hold on a sec')
-      setTimeout(() => {
-        console.log('ok, ready to end now')
-        super.emit('end', ...args)
-      }, 100)
-    } else {
-      return super.emit(ev, ...args)
-    }
-  }
-}
+```console
+$ node example.js --foo.bar
+{ _: [], "foo.bar": true }
 ```
 
-### transform that creates newline-delimited JSON
+### parse numbers
 
-```js
-class NDJSONEncode extends Minipass {
-  write(obj, cb) {
-    try {
-      // JSON.stringify can throw, emit an error on that
-      return super.write(JSON.stringify(obj) + '\n', 'utf8', cb)
-    } catch (er) {
-      this.emit('error', er)
-    }
-  }
-  end(obj, cb) {
-    if (typeof obj === 'function') {
-      cb = obj
-      obj = undefined
-    }
-    if (obj !== undefined) {
-      this.write(obj)
-    }
-    return super.end(cb)
-  }
-}
+* default: `true`
+* key: `parse-numbers`
+
+Should keys that look like numbers be treated as such?
+
+```console
+$ node example.js --foo=99.3
+{ _: [], foo: 99.3 }
 ```
 
-### transform that parses newline-delimited JSON
+_if disabled:_
 
-```js
-class NDJSONDecode extends Minipass {
-  constructor (options) {
-    // always be in object mode, as far as Minipass is concerned
-    super({ objectMode: true })
-    this._jsonBuffer = ''
-  }
-  write (chunk, encoding, cb) {
-    if (typeof chunk === 'string' &&
-        typeof encoding === 'string' &&
-        encoding !== 'utf8') {
-      chunk = Buffer.from(chunk, encoding).toString()
-    } else if (Buffer.isBuffer(chunk)) {
-      chunk = chunk.toString()
-    }
-    if (typeof encoding === 'function') {
-      cb = encoding
-    }
-    const jsonData = (this._jsonBuffer + chunk).split('\n')
-    this._jsonBuffer = jsonData.pop()
-    for (let i = 0; i < jsonData.length; i++) {
-      try {
-        // JSON.parse can throw, emit an error on that
-        super.write(JSON.parse(jsonData[i]))
-      } catch (er) {
-        this.emit('error', er)
-        continue
-      }
-    }
-    if (cb)
-      cb()
-  }
-}
+```console
+$ node example.js --foo=99.3
+{ _: [], foo: "99.3" }
 ```
+
+### parse positional numbers
+
+* default: `true`
+* key: `parse-positional-numbers`
+
+Should positional keys that look like numbers be treated as such.
+
+```console
+$ node example.js 99.3
+{ _: [99.3] }
+```
+
+_if disabled:_
+
+```console
+$ node example.js 99.3
+{ _: ['99.3'] }
+```
+
+### boolean negation
+
+* default: `true`
+* key: `boolean-negation`
+
+Should variables prefixed with `--no` be treated as negations?
+
+```console
+$ node example.js --no-foo
+{ _: [], foo: false }
+```
+
+_if disabled:_
+
+```console
+$ node example.js --no-foo
+{ _: [], "no-foo": true }
+```
+
+### combine arrays
+
+* default: `false`
+* key: `combine-arrays`
+
+Should arrays be combined when provided by both command line arguments and
+a configuration file.
+
+### duplicate arguments array
+
+* default: `true`
+* key: `duplicate-arguments-array`
+
+Should arguments be coerced into an array when duplicated:
+
+```console
+$ node example.js -x 1 -x 2
+{ _: [], x: [1, 2] }
+```
+
+_if disabled:_
+
+```console
+$ node example.js -x 1 -x 2
+{ _: [], x: 2 }
+```
+
+### flatten duplicate arrays
+
+* default: `true`
+* key: `flatten-duplicate-arrays`
+
+Should array arguments be coerced into a single array when duplicated:
+
+```console
+$ node example.js -x 1 2 -x 3 4
+{ _: [], x: [1, 2, 3, 4] }
+```
+
+_if disabled:_
+
+```console
+$ node example.js -x 1 2 -x 3 4
+{ _: [], x: [[1, 2], [3, 4]] }
+```
+
+### greedy arrays
+
+* default: `true`
+* key: `greedy-arrays`
+
+Should arrays consume more than one positional argument following their flag.
+
+```console
+$ node example --arr 1 2
+{ _: [], arr: [1, 2] }
+```
+
+_if disabled:_
+
+```console
+$ node example --arr 1 2
+{ _: [2], arr: [1] }
+```
+
+**Note: in `v18.0.0` we are considering defaulting greedy arrays to `false`.**
+
+### nargs eats options
+
+* default: `false`
+* key: `nargs-eats-options`
+
+Should nargs consume dash options as well as positional arguments.
+
+### negation prefix
+
+* default: `no-`
+* key: `negation-prefix`
+
+The prefix to use for negated boolean variables.
+
+```console
+$ node example.js --no-foo
+{ _: [], foo: false }
+```
+
+_if set to `quux`:_
+
+```console
+$ node example.js --quuxfoo
+{ _: [], foo: false }
+```
+
+### populate --
+
+* default: `false`.
+* key: `populate--`
+
+Should unparsed flags be stored in `--` or `_`.
+
+_If disabled:_
+
+```console
+$ node example.js a -b -- x y
+{ _: [ 'a', 'x', 'y' ], b: true }
+```
+
+_If enabled:_
+
+```console
+$ node example.js a -b -- x y
+{ _: [ 'a' ], '--': [ 'x', 'y' ], b: true }
+```
+
+### set placeholder key
+
+* default: `false`.
+* key: `set-placeholder-key`.
+
+Should a placeholder be added for keys not set via the corresponding CLI argument?
+
+_If disabled:_
+
+```console
+$ node example.js -a 1 -c 2
+{ _: [], a: 1, c: 2 }
+```
+
+_If enabled:_
+
+```console
+$ node example.js -a 1 -c 2
+{ _: [], a: 1, b: undefined, c: 2 }
+```
+
+### halt at non-option
+
+* default: `false`.
+* key: `halt-at-non-option`.
+
+Should parsing stop at the first positional argument? This is similar to how e.g. `ssh` parses its command line.
+
+_If disabled:_
+
+```console
+$ node example.js -a run b -x y
+{ _: [ 'b' ], a: 'run', x: 'y' }
+```
+
+_If enabled:_
+
+```console
+$ node example.js -a run b -x y
+{ _: [ 'b', '-x', 'y' ], a: 'run' }
+```
+
+### strip aliased
+
+* default: `false`
+* key: `strip-aliased`
+
+Should aliases be removed before returning results?
+
+_If disabled:_
+
+```console
+$ node example.js --test-field 1
+{ _: [], 'test-field': 1, testField: 1, 'test-alias': 1, testAlias: 1 }
+```
+
+_If enabled:_
+
+```console
+$ node example.js --test-field 1
+{ _: [], 'test-field': 1, testField: 1 }
+```
+
+### strip dashed
+
+* default: `false`
+* key: `strip-dashed`
+
+Should dashed keys be removed before returning results?  This option has no effect if
+`camel-case-expansion` is disabled.
+
+_If disabled:_
+
+```console
+$ node example.js --test-field 1
+{ _: [], 'test-field': 1, testField: 1 }
+```
+
+_If enabled:_
+
+```console
+$ node example.js --test-field 1
+{ _: [], testField: 1 }
+```
+
+### unknown options as args
+
+* default: `false`
+* key: `unknown-options-as-args`
+
+Should unknown options be treated like regular arguments?  An unknown option is one that is not
+configured in `opts`.
+
+_If disabled_
+
+```console
+$ node example.js --unknown-option --known-option 2 --string-option --unknown-option2
+{ _: [], unknownOption: true, knownOption: 2, stringOption: '', unknownOption2: true }
+```
+
+_If enabled_
+
+```console
+$ node example.js --unknown-option --known-option 2 --string-option --unknown-option2
+{ _: ['--unknown-option'], knownOption: 2, stringOption: '--unknown-option2' }
+```
+
+## Supported Node.js Versions
+
+Libraries in this ecosystem make a best effort to track
+[Node.js' release schedule](https://nodejs.org/en/about/releases/). Here's [a
+post on why we think this is important](https://medium.com/the-node-js-collection/maintainers-should-consider-following-node-js-release-schedule-ab08ed4de71a).
+
+## Special Thanks
+
+The yargs project evolves from optimist and minimist. It owes its
+existence to a lot of James Halliday's hard work. Thanks [substack](https://github.com/substack) **beep** **boop** \o/
+
+## License
+
+ISC
